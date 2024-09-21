@@ -1,5 +1,5 @@
 use std::{
-    future::{poll_fn, Future},
+    future::{self, poll_fn, Future},
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll},
@@ -83,4 +83,8 @@ pub async fn sleep_util(instant: Instant) {
         }
     })
     .await;
+}
+
+pub async fn yield_now() {
+    future::ready(()).await
 }
