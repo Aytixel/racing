@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{task::spawn, BoxFuture};
+use crate::{thread::spawn, BoxFuture};
 
 thread_local! {
     pub(crate) static FUTURE_SENDER: OnceCell<Sender<BoxFuture<'static, ()>>> = OnceCell::new();
