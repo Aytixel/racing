@@ -11,7 +11,7 @@ use std::{
 use crate::io::{AsyncRead, AsyncWrite};
 
 #[derive(Debug)]
-pub struct TcpStream(net::TcpStream);
+pub struct TcpStream(pub(crate) net::TcpStream);
 
 impl TcpStream {
     pub async fn connect<A: ToSocketAddrs>(addr: A) -> Result<TcpStream> {
