@@ -3,10 +3,7 @@ use std::{
     collections::VecDeque,
     future::Future,
     pin::pin,
-    sync::{
-        mpsc::{channel, Receiver, Sender},
-        Arc, Mutex,
-    },
+    sync::{Arc, Barrier, Condvar, Mutex},
     task::{Context, Poll, Wake},
     thread::{self, sleep},
     time::Duration,
@@ -15,7 +12,72 @@ use std::{
 use crate::{thread::spawn, BoxFuture};
 
 thread_local! {
-    pub(crate) static FUTURE_SENDER: OnceCell<Sender<BoxFuture<'static, ()>>> = OnceCell::new();
+    pub(crate) static FUTURE_QUEUE: OnceCell<FutureQueue> = OnceCell::new();
+}
+
+#[derive(Clone)]
+pub(crate) struct FutureQueue {
+    queue: Arc<(Mutex<VecDeque<BoxFuture<'static, ()>>>, Condvar)>,
+}
+
+impl FutureQueue {
+    fn new() -> Self {
+        Self {
+            queue: Arc::new((Mutex::new(VecDeque::new()), Condvar::new())),
+        }
+    }
+
+    pub fn get_thread_local() -> Self {
+        FUTURE_QUEUE.with(|future_queue| {
+            future_queue
+                .get()
+                .expect("Can't get future thread queue")
+                .clone()
+        })
+    }
+
+    fn set_thread_local(&self) {
+        FUTURE_QUEUE.with(|future_queue| {
+            future_queue.set(self.clone()).ok();
+        })
+    }
+
+    pub fn send(&self, future: BoxFuture<'static, ()>) {
+        self.queue
+            .0
+            .lock()
+            .expect("Thread is poisoned")
+            .push_back(future);
+    }
+
+    fn get(&self) -> Option<BoxFuture<'static, ()>> {
+        self.queue.0.lock().expect("Thread is poisoned").pop_front()
+    }
+
+    fn drain(&self) -> Vec<BoxFuture<'static, ()>> {
+        self.queue
+            .0
+            .lock()
+            .expect("Thread is poisoned")
+            .drain(..)
+            .collect()
+    }
+
+    fn wait(&self) {
+        let queue = self.queue.0.lock().expect("Thread is poisoned");
+
+        match queue.len() {
+            0 => {
+                self.queue.1.wait(queue).ok();
+            }
+            1 => sleep(Duration::from_millis(1)),
+            _ => {
+                self.queue.1.notify_one();
+
+                sleep(Duration::from_millis(1));
+            }
+        }
+    }
 }
 
 enum ThreadWaker {
@@ -58,26 +120,21 @@ impl Runtime {
         &self,
         future: impl Future<Output = T> + Send + 'static,
     ) -> T {
-        let (sender, receiver) = channel::<BoxFuture<'static, ()>>();
+        let queue = FutureQueue::new();
 
-        FUTURE_SENDER.with(|sender_| {
-            sender_
-                .set(sender.clone())
-                .expect("Can't block on a thread you already block on");
-        });
+        queue.set_thread_local();
 
         match *self.waker {
-            ThreadWaker::Current => self.block_on_current(sender, receiver, future),
+            ThreadWaker::Current => self.block_on_current(queue, future),
             ThreadWaker::Threaded(worker_thread) => {
-                self.block_on_threaded(sender, receiver, future, worker_thread)
+                self.block_on_threaded(queue, future, worker_thread)
             }
         }
     }
 
     fn block_on_current<T: Send + 'static>(
         &self,
-        sender: Sender<BoxFuture<'static, ()>>,
-        receiver: Receiver<BoxFuture<'static, ()>>,
+        queue: FutureQueue,
         future: impl Future<Output = T> + Send + 'static,
     ) -> T {
         let mut future = pin!(future);
@@ -85,84 +142,69 @@ impl Runtime {
         let mut context = Context::from_waker(&waker);
 
         loop {
-            match future.as_mut().poll(&mut context) {
-                Poll::Ready(result) => {
-                    return result;
-                }
-                Poll::Pending => sleep(Duration::from_millis(1)),
+            if let Poll::Ready(result) = future.as_mut().poll(&mut context) {
+                return result;
             }
 
-            let mut queue: Vec<BoxFuture<'static, ()>> = Vec::new();
-
-            while let Ok(mut future) = receiver.try_recv() {
+            for mut future in queue.drain() {
                 if let Poll::Pending = future.as_mut().poll(&mut context) {
-                    queue.push(future);
+                    queue.send(future);
                 }
             }
 
-            queue.into_iter().for_each(|future| {
-                sender.send(future).ok();
-            });
+            sleep(Duration::from_millis(1));
         }
     }
 
     fn block_on_threaded<T: Send + 'static>(
         &self,
-        sender: Sender<BoxFuture<'static, ()>>,
-        receiver: Receiver<BoxFuture<'static, ()>>,
+        queue: FutureQueue,
         future: impl Future<Output = T> + Send + 'static,
         worker_thread: usize,
     ) -> T {
-        let waker = self.waker.clone().into();
-        let mut context = Context::from_waker(&waker);
-        let mut handle = pin!(spawn(Box::pin(future)));
-        let future_queue: Arc<Mutex<VecDeque<BoxFuture<'static, ()>>>> =
-            Arc::new(Mutex::new(VecDeque::new()));
+        if worker_thread < 1 {
+            panic!("You should use at least 1 worker threads");
+        }
 
         for _ in 0..worker_thread {
-            let sender = sender.clone();
-            let future_queue = future_queue.clone();
+            let queue: FutureQueue = queue.clone();
 
             thread::spawn(move || {
-                FUTURE_SENDER.with(|sender_| {
-                    sender_.set(sender).ok();
-                });
+                queue.set_thread_local();
 
                 let waker = ThreadWaker::threaded(worker_thread).into();
                 let mut context = Context::from_waker(&waker);
 
                 loop {
-                    if let Some(mut future) = {
-                        let mut future_queue =
-                            future_queue.lock().expect("Worker thread is poisoned");
-
-                        future_queue.pop_front()
-                    } {
+                    if let Some(mut future) = queue.get() {
                         if let Poll::Pending = future.as_mut().poll(&mut context) {
-                            let mut future_queue =
-                                future_queue.lock().expect("Worker thread is poisoned");
-
-                            future_queue.push_back(future);
+                            queue.send(future);
                         }
                     }
 
-                    sleep(Duration::from_millis(1));
+                    queue.wait();
                 }
             });
         }
 
-        loop {
-            if let Poll::Ready(result) = handle.as_mut().poll(&mut context) {
-                return result;
-            }
+        let result = Arc::new((Mutex::new(None), Barrier::new(2)));
 
-            while let Ok(future) = receiver.try_recv() {
-                let mut future_queue = future_queue.lock().expect("Main thread is poisoned");
+        spawn({
+            let result = result.clone();
 
-                future_queue.push_back(future);
-            }
+            Box::pin(async move {
+                *result
+                    .0
+                    .lock()
+                    .expect("Worker thread can't lock the result") = Some(future.await);
+                result.1.wait();
+            })
+        });
 
-            sleep(Duration::from_millis(1));
-        }
+        result.1.wait();
+
+        let mut result = result.0.lock().expect("Main thread can't lock the result");
+
+        result.take().unwrap()
     }
 }

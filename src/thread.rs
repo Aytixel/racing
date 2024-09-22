@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{runtime::FUTURE_SENDER, BoxFuture};
+use crate::{runtime::FutureQueue, BoxFuture};
 
 enum PollHandle<T> {
     Ready(Option<T>),
@@ -43,29 +43,24 @@ where
 {
     let poll_handle = PollHandle::new(Box::pin(future));
     let poll_handle_clone = poll_handle.clone();
+    let queue = FutureQueue::get_thread_local();
 
-    FUTURE_SENDER.with(|sender| {
-        sender
-            .get()
-            .expect("Can't get future thread sender")
-            .send(Box::pin(poll_fn(move |context| {
-                let poll_handle = poll_handle_clone.clone();
-                let Ok(mut poll_handle) = poll_handle.try_lock() else {
-                    return Poll::Pending;
-                };
-                let PollHandle::Pending(future) = &mut *poll_handle else {
-                    return Poll::Pending;
-                };
-                let Poll::Ready(result) = future.as_mut().poll(context) else {
-                    return Poll::Pending;
-                };
+    queue.send(Box::pin(poll_fn(move |context| {
+        let poll_handle = poll_handle_clone.clone();
+        let Ok(mut poll_handle) = poll_handle.try_lock() else {
+            return Poll::Pending;
+        };
+        let PollHandle::Pending(future) = &mut *poll_handle else {
+            return Poll::Pending;
+        };
+        let Poll::Ready(result) = future.as_mut().poll(context) else {
+            return Poll::Pending;
+        };
 
-                *poll_handle = PollHandle::Ready(Some(result));
+        *poll_handle = PollHandle::Ready(Some(result));
 
-                Poll::Ready(())
-            })))
-            .ok();
-    });
+        Poll::Ready(())
+    })));
 
     JoinHandle(poll_handle)
 }
