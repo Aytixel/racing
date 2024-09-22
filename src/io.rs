@@ -276,3 +276,129 @@ pub trait AsyncWrite {
         self
     }
 }
+
+pub async fn copy<R, W>(reader: &mut R, writer: &mut W) -> Result<u64>
+where
+    R: AsyncRead + ?Sized,
+    W: AsyncWrite + ?Sized,
+{
+    let mut buffer = [0u8; INIT_BUFFER_SIZE];
+    let mut length = 0;
+
+    loop {
+        match reader.read(&mut buffer).await {
+            Ok(0) => return Ok(length as u64),
+            Ok(length_) => {
+                length += length_;
+
+                let mut length = 0;
+                let buffer = &buffer[..length_];
+
+                while length != buffer.len() {
+                    match writer.write(&buffer[length..]).await {
+                        Ok(length_) => length += length_,
+                        Err(error) => match error.kind() {
+                            ErrorKind::Interrupted => {}
+                            _ => return Err(error),
+                        },
+                    }
+                }
+            }
+            Err(error) => match error.kind() {
+                ErrorKind::Interrupted => {}
+                _ => return Err(error),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Empty;
+
+impl AsyncRead for Empty {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        for byte in buf.iter_mut() {
+            *byte = 0;
+        }
+
+        Ok(buf.len())
+    }
+}
+
+impl AsyncWrite for &Empty {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        Ok(buf.len())
+    }
+
+    async fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl AsyncWrite for Empty {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        (&*self).write(buf).await
+    }
+
+    async fn flush(&mut self) -> Result<()> {
+        (&*self).flush().await
+    }
+}
+
+pub const fn empty() -> Empty {
+    Empty
+}
+
+pub async fn read_to_string<R: AsyncRead>(mut reader: R) -> Result<String> {
+    let mut buffer = String::new();
+
+    reader.read_to_string(&mut buffer).await?;
+
+    Ok(buffer)
+}
+
+#[derive(Debug)]
+pub struct Repeat {
+    byte: u8,
+}
+
+impl AsyncRead for Repeat {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        for byte in buf.iter_mut() {
+            *byte = self.byte;
+        }
+
+        Ok(buf.len())
+    }
+}
+
+pub const fn repeat(byte: u8) -> Repeat {
+    Repeat { byte }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Sink;
+
+impl AsyncWrite for &Sink {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        Ok(buf.len())
+    }
+
+    async fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl AsyncWrite for Sink {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        (&*self).write(buf).await
+    }
+
+    async fn flush(&mut self) -> Result<()> {
+        (&*self).flush().await
+    }
+}
+
+pub const fn sink() -> Sink {
+    Sink
+}
