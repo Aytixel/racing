@@ -8,7 +8,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::io::{AsyncRead, AsyncWrite};
+use crate::{
+    io::{AsyncRead, AsyncWrite},
+    net::poll_net,
+};
 
 #[derive(Debug)]
 pub struct TcpStream(pub(crate) net::TcpStream);
@@ -97,14 +100,7 @@ impl TcpStream {
     }
 
     pub async fn peek(&self, buf: &mut [u8]) -> Result<usize> {
-        poll_fn(|_context| match self.0.peek(buf) {
-            Ok(length) => Poll::Ready(Ok(length)),
-            Err(error) => match error.kind() {
-                ErrorKind::WouldBlock => Poll::Pending,
-                _ => Poll::Ready(Err(error)),
-            },
-        })
-        .await
+        poll_net!(self.0, self.read_timeout(), TcpStream::peek(buf))
     }
 
     pub fn set_nodelay(&self, nodelay: bool) -> Result<()> {
@@ -162,45 +158,11 @@ impl IntoRawFd for TcpStream {
 
 impl AsyncRead for &TcpStream {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let mut stream = self.0.try_clone()?;
-
-        if let Ok(Some(duration)) = self.read_timeout() {
-            if duration.is_zero() {
-                return Err(Error::new(
-                    ErrorKind::InvalidInput,
-                    "Timeout duration can't be zero",
-                ));
-            }
-
-            let instant = Instant::now() + duration;
-
-            poll_fn(|_context| {
-                if instant.checked_duration_since(Instant::now()).is_none() {
-                    return Poll::Ready(Err(Error::new(
-                        ErrorKind::TimedOut,
-                        "TcpStream timed out",
-                    )));
-                }
-
-                match stream.read(buf) {
-                    Ok(length) => Poll::Ready(Ok(length)),
-                    Err(error) => match error.kind() {
-                        ErrorKind::WouldBlock => Poll::Pending,
-                        _ => Poll::Ready(Err(error)),
-                    },
-                }
-            })
-            .await
-        } else {
-            poll_fn(|_context| match stream.read(buf) {
-                Ok(length) => Poll::Ready(Ok(length)),
-                Err(error) => match error.kind() {
-                    ErrorKind::WouldBlock => Poll::Pending,
-                    _ => Poll::Ready(Err(error)),
-                },
-            })
-            .await
-        }
+        poll_net!(
+            self.0.try_clone()?,
+            self.read_timeout(),
+            TcpStream::read(buf)
+        )
     }
 }
 
@@ -212,87 +174,19 @@ impl AsyncRead for TcpStream {
 
 impl AsyncWrite for &TcpStream {
     async fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        let mut stream = self.0.try_clone()?;
-
-        if let Ok(Some(duration)) = self.write_timeout() {
-            if duration.is_zero() {
-                return Err(Error::new(
-                    ErrorKind::InvalidInput,
-                    "Timeout duration can't be zero",
-                ));
-            }
-
-            let instant = Instant::now() + duration;
-
-            poll_fn(|_context| {
-                if instant.checked_duration_since(Instant::now()).is_none() {
-                    return Poll::Ready(Err(Error::new(
-                        ErrorKind::TimedOut,
-                        "TcpStream timed out",
-                    )));
-                }
-
-                match stream.write(buf) {
-                    Ok(length) => Poll::Ready(Ok(length)),
-                    Err(error) => match error.kind() {
-                        ErrorKind::WouldBlock => Poll::Pending,
-                        _ => Poll::Ready(Err(error)),
-                    },
-                }
-            })
-            .await
-        } else {
-            poll_fn(|_context| match stream.write(buf) {
-                Ok(length) => Poll::Ready(Ok(length)),
-                Err(error) => match error.kind() {
-                    ErrorKind::WouldBlock => Poll::Pending,
-                    _ => Poll::Ready(Err(error)),
-                },
-            })
-            .await
-        }
+        poll_net!(
+            self.0.try_clone()?,
+            self.write_timeout(),
+            TcpStream::write(buf)
+        )
     }
 
     async fn flush(&mut self) -> Result<()> {
-        let mut stream = self.0.try_clone()?;
-
-        if let Ok(Some(duration)) = self.write_timeout() {
-            if duration.is_zero() {
-                return Err(Error::new(
-                    ErrorKind::InvalidInput,
-                    "Timeout duration can't be zero",
-                ));
-            }
-
-            let instant = Instant::now() + duration;
-
-            poll_fn(|_context| {
-                if instant.checked_duration_since(Instant::now()).is_none() {
-                    return Poll::Ready(Err(Error::new(
-                        ErrorKind::TimedOut,
-                        "TcpStream timed out",
-                    )));
-                }
-
-                match stream.flush() {
-                    Ok(()) => Poll::Ready(Ok(())),
-                    Err(error) => match error.kind() {
-                        ErrorKind::WouldBlock => Poll::Pending,
-                        _ => Poll::Ready(Err(error)),
-                    },
-                }
-            })
-            .await
-        } else {
-            poll_fn(|_context| match stream.flush() {
-                Ok(()) => Poll::Ready(Ok(())),
-                Err(error) => match error.kind() {
-                    ErrorKind::WouldBlock => Poll::Pending,
-                    _ => Poll::Ready(Err(error)),
-                },
-            })
-            .await
-        }
+        poll_net!(
+            self.0.try_clone()?,
+            self.write_timeout(),
+            TcpStream::flush()
+        )
     }
 }
 
