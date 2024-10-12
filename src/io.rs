@@ -6,6 +6,10 @@ use std::{
 
 const INIT_BUFFER_SIZE: usize = 4096;
 
+pub mod prelude {
+    pub use super::{AsyncRead, AsyncWrite};
+}
+
 pub struct Chain<T, U> {
     reader: T,
     next: U,
