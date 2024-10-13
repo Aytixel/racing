@@ -8,6 +8,8 @@ use std::{
     task::Poll,
 };
 
+use super::TryLock;
+
 pub struct MutexGuard<'a, T> {
     mutex: &'a Mutex<T>,
 }
@@ -77,12 +79,6 @@ impl<T: fmt::Display> fmt::Display for MutexGuard<'_, T> {
     }
 }
 
-#[derive(Debug)]
-pub enum TryLock<'a, T> {
-    Guard(MutexGuard<'a, T>),
-    WouldBlock,
-}
-
 #[derive(Default)]
 pub struct Mutex<T> {
     locked: AtomicBool,
@@ -113,7 +109,7 @@ impl<T> Mutex<T> {
         .await
     }
 
-    pub fn try_lock(&self) -> TryLock<'_, T> {
+    pub fn try_lock(&self) -> TryLock<MutexGuard<'_, T>> {
         if self.locked.fetch_and(true, Ordering::SeqCst) {
             TryLock::WouldBlock
         } else {
@@ -148,11 +144,5 @@ impl<T: fmt::Debug> fmt::Debug for Mutex<T> {
 impl<T> From<T> for Mutex<T> {
     fn from(value: T) -> Self {
         Mutex::new(value)
-    }
-}
-
-impl<T> Drop for Mutex<T> {
-    fn drop(&mut self) {
-        self.locked.store(false, Ordering::Relaxed);
     }
 }
