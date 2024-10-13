@@ -29,9 +29,9 @@ impl<T> Deref for RwLockReadGuard<'_, T> {
         unsafe {
             &*self
                 .rwlock
-                .data
+                .value
                 .as_ref()
-                .expect("RwLock data dropped before deref")
+                .expect("RwLock value dropped before deref")
                 .get()
         }
     }
@@ -40,7 +40,7 @@ impl<T> Deref for RwLockReadGuard<'_, T> {
 impl<T: fmt::Debug> fmt::Debug for RwLockReadGuard<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RwLockReadGuard")
-            .field("data", &self.rwlock.data)
+            .field("value", &self.rwlock.value)
             .finish()
     }
 }
@@ -50,9 +50,9 @@ impl<T: fmt::Display> fmt::Display for RwLockReadGuard<'_, T> {
         unsafe {
             &*self
                 .rwlock
-                .data
+                .value
                 .as_ref()
-                .expect("RwLock data dropped before fmt")
+                .expect("RwLock value dropped before fmt")
                 .get()
         }
         .fmt(f)
@@ -78,9 +78,9 @@ impl<T> Deref for RwLockWriteGuard<'_, T> {
         unsafe {
             &*self
                 .rwlock
-                .data
+                .value
                 .as_ref()
-                .expect("RwLock data dropped before deref")
+                .expect("RwLock value dropped before deref")
                 .get()
         }
     }
@@ -91,9 +91,9 @@ impl<T> DerefMut for RwLockWriteGuard<'_, T> {
         unsafe {
             &mut *self
                 .rwlock
-                .data
+                .value
                 .as_ref()
-                .expect("RwLock data dropped before deref")
+                .expect("RwLock value dropped before deref")
                 .get()
         }
     }
@@ -102,7 +102,7 @@ impl<T> DerefMut for RwLockWriteGuard<'_, T> {
 impl<T: fmt::Debug> fmt::Debug for RwLockWriteGuard<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RwLockWriteGuard")
-            .field("data", &self.rwlock.data)
+            .field("value", &self.rwlock.value)
             .finish()
     }
 }
@@ -112,9 +112,9 @@ impl<T: fmt::Display> fmt::Display for RwLockWriteGuard<'_, T> {
         unsafe {
             &*self
                 .rwlock
-                .data
+                .value
                 .as_ref()
-                .expect("RwLock data dropped before fmt")
+                .expect("RwLock value dropped before fmt")
                 .get()
         }
         .fmt(f)
@@ -124,7 +124,7 @@ impl<T: fmt::Display> fmt::Display for RwLockWriteGuard<'_, T> {
 #[derive(Default)]
 pub struct RwLock<T> {
     locked: AtomicUsize,
-    data: Option<UnsafeCell<T>>,
+    value: Option<UnsafeCell<T>>,
 }
 
 impl<T> RefUnwindSafe for RwLock<T> {}
@@ -136,7 +136,7 @@ impl<T> RwLock<T> {
     pub const fn new(t: T) -> RwLock<T> {
         RwLock {
             locked: AtomicUsize::new(1),
-            data: Some(UnsafeCell::new(t)),
+            value: Some(UnsafeCell::new(t)),
         }
     }
 
@@ -202,23 +202,25 @@ impl<T> RwLock<T> {
     where
         T: Sized,
     {
-        self.data
+        self.value
             .take()
-            .expect("RwLock data dropped before into_inner")
+            .expect("RwLock value dropped before into_inner")
             .into_inner()
     }
 
     pub fn get_mut(&mut self) -> &mut T {
-        self.data
+        self.value
             .as_mut()
-            .expect("RwLock data dropped before get_mut")
+            .expect("RwLock value dropped before get_mut")
             .get_mut()
     }
 }
 
 impl<T: fmt::Debug> fmt::Debug for RwLock<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RwLock").field("data", &self.data).finish()
+        f.debug_struct("RwLock")
+            .field("value", &self.value)
+            .finish()
     }
 }
 

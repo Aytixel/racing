@@ -1,5 +1,6 @@
 use std::{
     cell::Cell,
+    fmt,
     future::{poll_fn, Future},
     panic::{RefUnwindSafe, UnwindSafe},
     task::Poll,
@@ -23,7 +24,7 @@ pub struct CondvarState {
     queue: Vec<usize>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Condvar {
     state: Mutex<CondvarState>,
 }
@@ -124,6 +125,12 @@ impl Condvar {
 
     pub async fn notify_all(&self) {
         self.state.lock().await.queue.drain(..);
+    }
+}
+
+impl fmt::Debug for Condvar {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Convar").finish()
     }
 }
 

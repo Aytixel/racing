@@ -36,9 +36,9 @@ impl<T> Deref for MutexGuard<'_, T> {
         unsafe {
             &*self
                 .mutex
-                .data
+                .value
                 .as_ref()
-                .expect("Mutex data dropped before deref")
+                .expect("Mutex value dropped before deref")
                 .get()
         }
     }
@@ -49,9 +49,9 @@ impl<T> DerefMut for MutexGuard<'_, T> {
         unsafe {
             &mut *self
                 .mutex
-                .data
+                .value
                 .as_ref()
-                .expect("Mutex data dropped before deref")
+                .expect("Mutex value dropped before deref")
                 .get()
         }
     }
@@ -60,7 +60,7 @@ impl<T> DerefMut for MutexGuard<'_, T> {
 impl<T: fmt::Debug> fmt::Debug for MutexGuard<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MutexGuard")
-            .field("data", &self.mutex.data)
+            .field("value", &self.mutex.value)
             .finish()
     }
 }
@@ -70,9 +70,9 @@ impl<T: fmt::Display> fmt::Display for MutexGuard<'_, T> {
         unsafe {
             &*self
                 .mutex
-                .data
+                .value
                 .as_ref()
-                .expect("Mutex data dropped before fmt")
+                .expect("Mutex value dropped before fmt")
                 .get()
         }
         .fmt(f)
@@ -82,7 +82,7 @@ impl<T: fmt::Display> fmt::Display for MutexGuard<'_, T> {
 #[derive(Default)]
 pub struct Mutex<T> {
     locked: AtomicBool,
-    data: Option<UnsafeCell<T>>,
+    value: Option<UnsafeCell<T>>,
 }
 
 impl<T> RefUnwindSafe for Mutex<T> {}
@@ -94,7 +94,7 @@ impl<T> Mutex<T> {
     pub const fn new(t: T) -> Mutex<T> {
         Mutex {
             locked: AtomicBool::new(false),
-            data: Some(UnsafeCell::new(t)),
+            value: Some(UnsafeCell::new(t)),
         }
     }
 
@@ -121,23 +121,23 @@ impl<T> Mutex<T> {
     where
         T: Sized,
     {
-        self.data
+        self.value
             .take()
-            .expect("Mutex data dropped before into_inner")
+            .expect("Mutex value dropped before into_inner")
             .into_inner()
     }
 
     pub fn get_mut(&mut self) -> &mut T {
-        self.data
+        self.value
             .as_mut()
-            .expect("Mutex data dropped before get_mut")
+            .expect("Mutex value dropped before get_mut")
             .get_mut()
     }
 }
 
 impl<T: fmt::Debug> fmt::Debug for Mutex<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Mutex").field("data", &self.data).finish()
+        f.debug_struct("Mutex").field("value", &self.value).finish()
     }
 }
 
